@@ -47,6 +47,41 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+## LLM Backend Switching
+
+You can switch between Claude and Ollama backends. The switch takes effect on the next message.
+
+To switch to Ollama:
+```bash
+echo '{"mode":"ollama","model":"qwen3-coder-next:latest"}' > /workspace/group/llm-mode.json
+```
+
+Available Ollama models (installed on host):
+- `qwen3.5:latest` — default, balanced (6.6GB)
+- `qwen3-coder-next:latest` — best for coding (51GB)
+- `nemotron-3-nano:30b` — general purpose (24GB)
+- `lfm2:latest` — general purpose (14GB)
+- `llama3.2:latest` — lightweight (2GB)
+
+To switch back to Claude:
+```bash
+echo '{"mode":"claude"}' > /workspace/group/llm-mode.json
+```
+
+When the user asks to switch backends, write the file and confirm that the switch will take effect from the next message.
+
+## Development Projects
+
+The following projects are mounted and available for development work:
+
+### nanoikm-pg — `/workspace/extra/nanoikm-pg`
+The agent's development workspace. New projects and repositories live here.
+
+When working on projects here:
+- GitHub authentication is available via `GITHUB_TOKEN` env var (already configured)
+- Git identity is set via `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` env vars (already set)
+- Use `gh issue list`, `gh pr create`, etc. for GitHub operations
+
 ## Message Formatting
 
 NEVER use markdown. Only use WhatsApp/Telegram formatting:

@@ -16,6 +16,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -212,34 +213,79 @@ function buildVolumeMounts(
   return mounts;
 }
 
+interface LlmMode {
+  mode: 'claude' | 'ollama';
+  model?: string;
+}
+
+export function readLlmMode(groupFolder: string): LlmMode {
+  const modePath = path.join(resolveGroupFolderPath(groupFolder), 'llm-mode.json');
+  try {
+    if (fs.existsSync(modePath)) {
+      return JSON.parse(fs.readFileSync(modePath, 'utf-8')) as LlmMode;
+    }
+  } catch { /* ignore */ }
+  return { mode: 'claude' };
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  groupFolder: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
+  const llmMode = readLlmMode(groupFolder);
 
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  if (llmMode.mode === 'ollama') {
+    // Ollama mode: bypass credential proxy, point directly to local Ollama
+    args.push('-e', `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:11434`);
+    args.push('-e', 'ANTHROPIC_API_KEY=ollama');
+    if (llmMode.model) {
+      args.push('-e', `NANOCLAW_OLLAMA_MODEL=${llmMode.model}`);
+    }
+    logger.info({ group: groupFolder, model: llmMode.model }, 'Container using Ollama backend');
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    // Claude mode: route API traffic through the credential proxy (containers never see real secrets)
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    // API key mode: SDK sends x-api-key, proxy replaces with real key.
+    // OAuth mode:   SDK exchanges placeholder token for temp API key,
+    //               proxy injects real OAuth token on that exchange request.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
   }
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
+
+  // Pass GitHub token and git identity if configured in .env
+  const devEnv = readEnvFile([
+    'GITHUB_TOKEN',
+    'GIT_AUTHOR_NAME',
+    'GIT_AUTHOR_EMAIL',
+    'GIT_COMMITTER_NAME',
+    'GIT_COMMITTER_EMAIL',
+  ]);
+  if (devEnv.GITHUB_TOKEN) {
+    args.push('-e', `GITHUB_TOKEN=${devEnv.GITHUB_TOKEN}`);
+    args.push('-e', `GH_TOKEN=${devEnv.GITHUB_TOKEN}`);
+  }
+  if (devEnv.GIT_AUTHOR_NAME) args.push('-e', `GIT_AUTHOR_NAME=${devEnv.GIT_AUTHOR_NAME}`);
+  if (devEnv.GIT_AUTHOR_EMAIL) args.push('-e', `GIT_AUTHOR_EMAIL=${devEnv.GIT_AUTHOR_EMAIL}`);
+  if (devEnv.GIT_COMMITTER_NAME) args.push('-e', `GIT_COMMITTER_NAME=${devEnv.GIT_COMMITTER_NAME}`);
+  if (devEnv.GIT_COMMITTER_EMAIL) args.push('-e', `GIT_COMMITTER_EMAIL=${devEnv.GIT_COMMITTER_EMAIL}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -278,7 +324,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group.folder);
 
   logger.debug(
     {

@@ -81,8 +81,8 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.on('message:text', async (ctx) => {
-      // Skip commands
-      if (ctx.message.text.startsWith('/')) return;
+      // Skip unknown bot commands (but allow host-handled slash commands through)
+      if (ctx.message.text.startsWith('/') && !/^\/use(ollama|claude)\b/i.test(ctx.message.text)) return;
 
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;

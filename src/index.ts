@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 import {
   ASSISTANT_NAME,
@@ -20,6 +21,7 @@ import {
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
+  readLlmMode,
 } from './container-runner.js';
 import {
   cleanupOrphans,
@@ -139,6 +141,46 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+const OLLAMA_MODELS: Record<string, string> = {
+  'qwen3-coder': 'qwen3-coder-next:latest',
+  'nemotron': 'nemotron-3-nano:30b',
+  'lfm2': 'lfm2:latest',
+  'llama': 'llama3.2:latest',
+  'llama3': 'llama3.2:latest',
+};
+
+/**
+ * Handle host-level slash commands without going through the LLM.
+ * Returns a reply string if the command was handled, null otherwise.
+ */
+function handleHostCommand(
+  content: string,
+  groupFolder: string,
+): string | null {
+  const text = content.trim();
+  const modePath = path.join(resolveGroupFolderPath(groupFolder), 'llm-mode.json');
+
+  // /useollama [model]
+  const ollamaMatch = text.match(/^\/useollama(?:\s+(.+))?$/i);
+  if (ollamaMatch) {
+    const requested = ollamaMatch[1]?.trim().toLowerCase();
+    let model = 'qwen3.5:latest';
+    if (requested) {
+      model = OLLAMA_MODELS[requested] ?? requested;
+    }
+    fs.writeFileSync(modePath, JSON.stringify({ mode: 'ollama', model }, null, 2));
+    return `Switched to Ollama (${model}). Takes effect from the next message.`;
+  }
+
+  // /useclaude
+  if (/^\/useclaude$/i.test(text)) {
+    fs.writeFileSync(modePath, JSON.stringify({ mode: 'claude' }, null, 2));
+    return `Switched back to Claude. Takes effect from the next message.`;
+  }
+
+  return null;
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -164,6 +206,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Host-level slash commands — handled without the LLM (works even when rate-limited)
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  const hostReply = handleHostCommand(lastMsg.content, group.folder);
+  if (hostReply) {
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.sendMessage(chatJid, hostReply);
+    return true;
+  }
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const allowlistCfg = loadSenderAllowlist();
@@ -184,8 +236,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
 
+  const llmMode = readLlmMode(group.folder);
+  const backendLabel = llmMode.mode === 'ollama'
+    ? `ollama/${llmMode.model ?? 'default'}`
+    : 'claude';
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: missedMessages.length, backend: backendLabel },
     'Processing messages',
   );
 
@@ -297,7 +353,7 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (output.newSessionId && output.status !== 'error') {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
@@ -321,7 +377,7 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    if (output.newSessionId && output.status !== 'error') {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
@@ -415,9 +471,23 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
+          // Host-level slash commands intercept even when container is alive
+          const lastPending = messagesToSend[messagesToSend.length - 1];
+          const hostReplyIpc = handleHostCommand(lastPending.content, group.folder);
+          if (hostReplyIpc) {
+            lastAgentTimestamp[chatJid] = lastPending.timestamp;
+            saveState();
+            await channel.sendMessage(chatJid, hostReplyIpc);
+            continue;
+          }
+
           if (queue.sendMessage(chatJid, formatted)) {
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
+            const pipedMode = readLlmMode(group.folder);
+            const pipedBackend = pipedMode.mode === 'ollama'
+              ? `ollama/${pipedMode.model ?? 'default'}`
+              : 'claude';
+            logger.info(
+              { chatJid, count: messagesToSend.length, backend: pipedBackend },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =

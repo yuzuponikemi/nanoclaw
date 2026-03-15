@@ -389,13 +389,20 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const ollamaModel = process.env.NANOCLAW_OLLAMA_MODEL;
+
+  // Ollama doesn't support session replay — always start fresh to avoid infinite loops
+  const effectiveSessionId = ollamaModel ? undefined : sessionId;
+  const effectiveResumeAt = ollamaModel ? undefined : resumeAt;
+
   for await (const message of query({
     prompt: stream,
     options: {
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
-      resume: sessionId,
-      resumeSessionAt: resumeAt,
+      resume: effectiveSessionId,
+      resumeSessionAt: effectiveResumeAt,
+      model: ollamaModel ?? undefined,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
@@ -403,6 +410,7 @@ async function runQuery(
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
         'WebSearch', 'WebFetch',
+        'Agent',
         'Task', 'TaskOutput', 'TaskStop',
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
