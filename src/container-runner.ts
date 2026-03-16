@@ -45,7 +45,7 @@ export interface ContainerInput {
 }
 
 export interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'interim';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -219,12 +219,17 @@ interface LlmMode {
 }
 
 export function readLlmMode(groupFolder: string): LlmMode {
-  const modePath = path.join(resolveGroupFolderPath(groupFolder), 'llm-mode.json');
+  const modePath = path.join(
+    resolveGroupFolderPath(groupFolder),
+    'llm-mode.json',
+  );
   try {
     if (fs.existsSync(modePath)) {
       return JSON.parse(fs.readFileSync(modePath, 'utf-8')) as LlmMode;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { mode: 'claude' };
 }
 
@@ -242,12 +247,18 @@ function buildContainerArgs(
 
   if (llmMode.mode === 'ollama') {
     // Ollama mode: bypass credential proxy, point directly to local Ollama
-    args.push('-e', `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:11434`);
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:11434`,
+    );
     args.push('-e', 'ANTHROPIC_API_KEY=ollama');
     if (llmMode.model) {
       args.push('-e', `NANOCLAW_OLLAMA_MODEL=${llmMode.model}`);
     }
-    logger.info({ group: groupFolder, model: llmMode.model }, 'Container using Ollama backend');
+    logger.info(
+      { group: groupFolder, model: llmMode.model },
+      'Container using Ollama backend',
+    );
   } else {
     // Claude mode: route API traffic through the credential proxy (containers never see real secrets)
     args.push(
@@ -282,10 +293,14 @@ function buildContainerArgs(
     args.push('-e', `GITHUB_TOKEN=${devEnv.GITHUB_TOKEN}`);
     args.push('-e', `GH_TOKEN=${devEnv.GITHUB_TOKEN}`);
   }
-  if (devEnv.GIT_AUTHOR_NAME) args.push('-e', `GIT_AUTHOR_NAME=${devEnv.GIT_AUTHOR_NAME}`);
-  if (devEnv.GIT_AUTHOR_EMAIL) args.push('-e', `GIT_AUTHOR_EMAIL=${devEnv.GIT_AUTHOR_EMAIL}`);
-  if (devEnv.GIT_COMMITTER_NAME) args.push('-e', `GIT_COMMITTER_NAME=${devEnv.GIT_COMMITTER_NAME}`);
-  if (devEnv.GIT_COMMITTER_EMAIL) args.push('-e', `GIT_COMMITTER_EMAIL=${devEnv.GIT_COMMITTER_EMAIL}`);
+  if (devEnv.GIT_AUTHOR_NAME)
+    args.push('-e', `GIT_AUTHOR_NAME=${devEnv.GIT_AUTHOR_NAME}`);
+  if (devEnv.GIT_AUTHOR_EMAIL)
+    args.push('-e', `GIT_AUTHOR_EMAIL=${devEnv.GIT_AUTHOR_EMAIL}`);
+  if (devEnv.GIT_COMMITTER_NAME)
+    args.push('-e', `GIT_COMMITTER_NAME=${devEnv.GIT_COMMITTER_NAME}`);
+  if (devEnv.GIT_COMMITTER_EMAIL)
+    args.push('-e', `GIT_COMMITTER_EMAIL=${devEnv.GIT_COMMITTER_EMAIL}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

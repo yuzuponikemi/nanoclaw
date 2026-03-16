@@ -143,10 +143,10 @@ export function _setRegisteredGroups(
 
 const OLLAMA_MODELS: Record<string, string> = {
   'qwen3-coder': 'qwen3-coder-next:latest',
-  'nemotron': 'nemotron-3-nano:30b',
-  'lfm2': 'lfm2:latest',
-  'llama': 'llama3.2:latest',
-  'llama3': 'llama3.2:latest',
+  nemotron: 'nemotron-3-nano:30b',
+  lfm2: 'lfm2:latest',
+  llama: 'llama3.2:latest',
+  llama3: 'llama3.2:latest',
 };
 
 /**
@@ -158,7 +158,10 @@ function handleHostCommand(
   groupFolder: string,
 ): string | null {
   const text = content.trim();
-  const modePath = path.join(resolveGroupFolderPath(groupFolder), 'llm-mode.json');
+  const modePath = path.join(
+    resolveGroupFolderPath(groupFolder),
+    'llm-mode.json',
+  );
 
   // /useollama [model]
   const ollamaMatch = text.match(/^\/useollama(?:\s+(.+))?$/i);
@@ -168,7 +171,10 @@ function handleHostCommand(
     if (requested) {
       model = OLLAMA_MODELS[requested] ?? requested;
     }
-    fs.writeFileSync(modePath, JSON.stringify({ mode: 'ollama', model }, null, 2));
+    fs.writeFileSync(
+      modePath,
+      JSON.stringify({ mode: 'ollama', model }, null, 2),
+    );
     return `Switched to Ollama (${model}). Takes effect from the next message.`;
   }
 
@@ -237,11 +243,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   const llmMode = readLlmMode(group.folder);
-  const backendLabel = llmMode.mode === 'ollama'
-    ? `ollama/${llmMode.model ?? 'default'}`
-    : 'claude';
+  const backendLabel =
+    llmMode.mode === 'ollama'
+      ? `ollama/${llmMode.model ?? 'default'}`
+      : 'claude';
   logger.info(
-    { group: group.name, messageCount: missedMessages.length, backend: backendLabel },
+    {
+      group: group.name,
+      messageCount: missedMessages.length,
+      backend: backendLabel,
+    },
     'Processing messages',
   );
 
@@ -263,20 +274,64 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Interim text streaming: buffer assistant text and flush every 2.5s
+  let interimBuffer = '';
+  let interimTimer: ReturnType<typeof setTimeout> | null = null;
+  let interimChain = Promise.resolve();
+  // Track whether interim text was queued for the current turn to avoid
+  // sending the same text twice (agent-runner emits both interim + success).
+  let hadInterimThisTurn = false;
+
+  const flushInterimNow = () => {
+    if (interimTimer) { clearTimeout(interimTimer); interimTimer = null; }
+    const snapshot = interimBuffer.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+    interimBuffer = '';
+    if (snapshot) {
+      interimChain = interimChain.then(async () => {
+        await channel.sendMessage(chatJid, snapshot);
+        outputSentToUser = true;
+      });
+    }
+  };
+
+  const pushInterim = (text: string) => {
+    hadInterimThisTurn = true;
+    interimBuffer += (interimBuffer ? '\n\n' : '') + text;
+    if (interimTimer) clearTimeout(interimTimer);
+    interimTimer = setTimeout(flushInterimNow, 2500);
+  };
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
+    // Interim: live assistant text before the final result
+    if (result.status === 'interim' && result.result) {
+      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+      pushInterim(raw);
+      resetIdleTimer();
+      return;
+    }
+
     // Streaming output callback — called for each agent result
     if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+      // Flush any buffered interim text before the final result
+      flushInterimNow();
+      await interimChain;
+
+      // Skip sending the success result text if interim already delivered it
+      // (agent-runner emits the same text as both interim and success)
+      if (!hadInterimThisTurn) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
       }
+      hadInterimThisTurn = false; // reset for next turn
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
@@ -289,6 +344,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   });
+
+  // Drain any remaining interim buffer
+  flushInterimNow();
+  await interimChain;
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -473,7 +532,10 @@ async function startMessageLoop(): Promise<void> {
 
           // Host-level slash commands intercept even when container is alive
           const lastPending = messagesToSend[messagesToSend.length - 1];
-          const hostReplyIpc = handleHostCommand(lastPending.content, group.folder);
+          const hostReplyIpc = handleHostCommand(
+            lastPending.content,
+            group.folder,
+          );
           if (hostReplyIpc) {
             lastAgentTimestamp[chatJid] = lastPending.timestamp;
             saveState();
@@ -483,9 +545,10 @@ async function startMessageLoop(): Promise<void> {
 
           if (queue.sendMessage(chatJid, formatted)) {
             const pipedMode = readLlmMode(group.folder);
-            const pipedBackend = pipedMode.mode === 'ollama'
-              ? `ollama/${pipedMode.model ?? 'default'}`
-              : 'claude';
+            const pipedBackend =
+              pipedMode.mode === 'ollama'
+                ? `ollama/${pipedMode.model ?? 'default'}`
+                : 'claude';
             logger.info(
               { chatJid, count: messagesToSend.length, backend: pipedBackend },
               'Piped messages to active container',

@@ -30,7 +30,7 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'interim';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -443,6 +443,17 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Emit text content blocks as interim outputs for live streaming
+      const content = (message as { message?: { content?: unknown[] } }).message?.content;
+      if (Array.isArray(content)) {
+        const textParts = content
+          .filter((c: unknown) => (c as { type: string }).type === 'text')
+          .map((c: unknown) => (c as { text: string }).text)
+          .join('');
+        if (textParts.trim()) {
+          writeOutput({ status: 'interim', result: textParts });
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {

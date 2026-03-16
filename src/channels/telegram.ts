@@ -81,8 +81,8 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.on('message:text', async (ctx) => {
-      // Skip unknown bot commands (but allow host-handled slash commands through)
-      if (ctx.message.text.startsWith('/') && !/^\/use(ollama|claude)\b/i.test(ctx.message.text)) return;
+      // Skip Telegram system commands handled above (/chatid, /ping, /start, /help)
+      if (/^\/(?:chatid|ping|start|help)\b/i.test(ctx.message.text)) return;
 
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;
@@ -107,7 +107,8 @@ export class TelegramChannel implements Channel {
       const botUsername = ctx.me?.username?.toLowerCase();
       if (botUsername) {
         const entities = ctx.message.entities || [];
-        const isBotMentioned = entities.some((entity) => {
+        // Check entity-based mentions (most reliable)
+        const hasEntityMention = entities.some((entity) => {
           if (entity.type === 'mention') {
             const mentionText = content
               .substring(entity.offset, entity.offset + entity.length)
@@ -116,7 +117,12 @@ export class TelegramChannel implements Channel {
           }
           return false;
         });
-        if (isBotMentioned && !TRIGGER_PATTERN.test(content)) {
+        // Fallback: plain text mention at start of message (some clients skip entities)
+        const hasTextMention = content
+          .trim()
+          .toLowerCase()
+          .startsWith(`@${botUsername}`);
+        if ((hasEntityMention || hasTextMention) && !TRIGGER_PATTERN.test(content)) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
