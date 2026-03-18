@@ -462,7 +462,10 @@ export async function processTaskIpc(
           process.platform === 'darwin'
             ? `launchctl kickstart -k gui/${uid}/com.nanoclaw`
             : 'systemctl --user restart nanoclaw';
-        logger.info({ sourceGroup, cmd }, 'Restarting nanoclaw via IPC request');
+        logger.info(
+          { sourceGroup, cmd },
+          'Restarting nanoclaw via IPC request',
+        );
         exec(cmd, (err) => {
           if (err) logger.error({ err }, 'Failed to restart nanoclaw');
         });

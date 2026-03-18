@@ -267,8 +267,7 @@ export class TelegramChannel implements Channel {
     try {
       const numericId = jid.replace(/^tg:/, '');
       const api =
-        (sender && this.personaApis.get(sender.toLowerCase())) ||
-        this.bot.api;
+        (sender && this.personaApis.get(sender.toLowerCase())) || this.bot.api;
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
@@ -276,10 +275,17 @@ export class TelegramChannel implements Channel {
         await sendTelegramMessage(api, numericId, text);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(api, numericId, text.slice(i, i + MAX_LENGTH));
+          await sendTelegramMessage(
+            api,
+            numericId,
+            text.slice(i, i + MAX_LENGTH),
+          );
         }
       }
-      logger.info({ jid, sender, length: text.length }, 'Telegram message sent');
+      logger.info(
+        { jid, sender, length: text.length },
+        'Telegram message sent',
+      );
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
