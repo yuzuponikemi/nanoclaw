@@ -47,6 +47,7 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private personaApis: Map<string, Api> = new Map();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -59,6 +60,23 @@ export class TelegramChannel implements Channel {
         baseFetchConfig: { agent: https.globalAgent, compress: true },
       },
     });
+
+    // Load persona bot tokens (e.g. TELEGRAM_PERSONA_WRITER_TOKEN → persona name "writer")
+    const personaEnvKeys = Object.keys(process.env).filter((k) =>
+      /^TELEGRAM_PERSONA_.+_TOKEN$/.test(k),
+    );
+    const personaEnvFromFile = readEnvFile(personaEnvKeys);
+    for (const key of personaEnvKeys) {
+      const token = process.env[key] || personaEnvFromFile[key];
+      if (token) {
+        const name = key
+          .replace(/^TELEGRAM_PERSONA_/, '')
+          .replace(/_TOKEN$/, '')
+          .toLowerCase();
+        this.personaApis.set(name, new Bot(token).api);
+        logger.info({ name }, 'Telegram persona bot registered');
+      }
+    }
 
     // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {
@@ -122,7 +140,10 @@ export class TelegramChannel implements Channel {
           .trim()
           .toLowerCase()
           .startsWith(`@${botUsername}`);
-        if ((hasEntityMention || hasTextMention) && !TRIGGER_PATTERN.test(content)) {
+        if (
+          (hasEntityMention || hasTextMention) &&
+          !TRIGGER_PATTERN.test(content)
+        ) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
@@ -237,7 +258,7 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string, sender?: string): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -245,21 +266,20 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
+      const api =
+        (sender && this.personaApis.get(sender.toLowerCase())) ||
+        this.bot.api;
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
       if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text);
+        await sendTelegramMessage(api, numericId, text);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(
-            this.bot.api,
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-          );
+          await sendTelegramMessage(api, numericId, text.slice(i, i + MAX_LENGTH));
         }
       }
-      logger.info({ jid, length: text.length }, 'Telegram message sent');
+      logger.info({ jid, sender, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }

@@ -283,8 +283,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadInterimThisTurn = false;
 
   const flushInterimNow = () => {
-    if (interimTimer) { clearTimeout(interimTimer); interimTimer = null; }
-    const snapshot = interimBuffer.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+    if (interimTimer) {
+      clearTimeout(interimTimer);
+      interimTimer = null;
+    }
+    const snapshot = interimBuffer
+      .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+      .trim();
     interimBuffer = '';
     if (snapshot) {
       interimChain = interimChain.then(async () => {
@@ -304,7 +309,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Interim: live assistant text before the final result
     if (result.status === 'interim' && result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+      const raw =
+        typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
       pushInterim(raw);
       resetIdleTimer();
       return;
@@ -325,7 +333,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
@@ -691,10 +702,10 @@ async function main(): Promise<void> {
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
+    sendMessage: (jid, text, sender) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      return channel.sendMessage(jid, text, sender);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

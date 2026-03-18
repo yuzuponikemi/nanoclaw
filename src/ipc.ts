@@ -1,4 +1,6 @@
+import { exec } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
@@ -11,7 +13,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string, sender?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -80,7 +82,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  await deps.sendMessage(data.chatJid, data.text, data.sender);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -446,6 +448,24 @@ export async function processTaskIpc(
           { data },
           'Invalid register_group request - missing required fields',
         );
+      }
+      break;
+
+    case 'restart':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized restart attempt blocked');
+        break;
+      }
+      {
+        const uid = os.userInfo().uid;
+        const cmd =
+          process.platform === 'darwin'
+            ? `launchctl kickstart -k gui/${uid}/com.nanoclaw`
+            : 'systemctl --user restart nanoclaw';
+        logger.info({ sourceGroup, cmd }, 'Restarting nanoclaw via IPC request');
+        exec(cmd, (err) => {
+          if (err) logger.error({ err }, 'Failed to restart nanoclaw');
+        });
       }
       break;
 
