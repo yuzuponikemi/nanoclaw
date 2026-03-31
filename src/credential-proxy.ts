@@ -23,9 +23,47 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
+function extractUsage(body: string): { model: string; inputTokens: number; outputTokens: number } | null {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let model = '';
+
+  // Try SSE format first (streaming responses)
+  if (body.includes('event:') || body.includes('data:')) {
+    for (const line of body.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.type === 'message_start' && data.message) {
+          inputTokens = data.message.usage?.input_tokens ?? 0;
+          model = data.message.model ?? '';
+        }
+        if (data.type === 'message_delta' && data.usage) {
+          outputTokens = data.usage.output_tokens ?? 0;
+        }
+      } catch { /* skip non-JSON lines */ }
+    }
+  }
+
+  // Try JSON format (non-streaming responses)
+  if (inputTokens === 0) {
+    try {
+      const json = JSON.parse(body);
+      if (json.usage) {
+        inputTokens = json.usage.input_tokens ?? 0;
+        outputTokens = json.usage.output_tokens ?? 0;
+        model = json.model ?? '';
+      }
+    } catch { /* not JSON */ }
+  }
+
+  return inputTokens > 0 ? { model, inputTokens, outputTokens } : null;
+}
+
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
+  onUsage?: (entry: { model: string; inputTokens: number; outputTokens: number; requestPath: string }) => void,
 ): Promise<Server> {
   const secrets = readEnvFile([
     'ANTHROPIC_API_KEY',
@@ -89,7 +127,40 @@ export function startCredentialProxy(
           } as RequestOptions,
           (upRes) => {
             res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+
+            const isMessagesEndpoint = req.url?.includes('/v1/messages');
+
+            if (!isMessagesEndpoint || !onUsage) {
+              upRes.pipe(res);
+              return;
+            }
+
+            // Intercept for usage tracking
+            const responseChunks: Buffer[] = [];
+            upRes.on('data', (chunk: Buffer) => {
+              responseChunks.push(chunk);
+              res.write(chunk);
+            });
+            upRes.on('end', () => {
+              res.end();
+              // Parse usage from response (SSE or JSON)
+              try {
+                const responseBody = Buffer.concat(responseChunks).toString('utf8');
+                const usage = extractUsage(responseBody);
+                if (usage && onUsage) {
+                  try {
+                    onUsage({ ...usage, requestPath: req.url ?? '/v1/messages' });
+                  } catch (err) {
+                    logger.debug({ err }, 'onUsage callback threw');
+                  }
+                }
+              } catch (err) {
+                logger.debug({ err }, 'Failed to parse usage from response');
+              }
+            });
+            upRes.on('error', (err) => {
+              logger.debug({ err }, 'Response stream error');
+            });
           },
         );
 

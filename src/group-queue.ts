@@ -193,6 +193,25 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * On idle timeout: ask the container to compact the conversation before closing.
+   * Writes a _compact sentinel; the agent-runner injects /compact into the session
+   * then exits on its own. Falls back to direct close if the container is gone.
+   */
+  compactAndClose(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.groupFolder) return;
+
+    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+      fs.writeFileSync(path.join(inputDir, '_compact'), '');
+    } catch {
+      // Fallback: just close immediately
+      this.closeStdin(groupJid);
+    }
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',

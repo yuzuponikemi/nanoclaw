@@ -38,6 +38,8 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  logUsage,
+  getUsageStats,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -184,6 +186,61 @@ function handleHostCommand(
     return `Switched back to Claude. Takes effect from the next message.`;
   }
 
+  // /usage [days]
+  const usageMatch = text.match(/^\/usage(?:\s+(\d+))?$/i);
+  if (usageMatch) {
+    const days = usageMatch[1] ? parseInt(usageMatch[1], 10) : 7;
+    try {
+      const stats = getUsageStats(days);
+      const fmt = (n: number): string => {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+        return String(n);
+      };
+      const fmtComma = (n: number): string => n.toLocaleString('en-US');
+
+      let reply = `📊 API使用量 (直近${days}日)\n\n`;
+      reply += `合計: ${stats.totalCalls}回 | 入力 ${fmtComma(stats.totalInput)} tok | 出力 ${fmtComma(stats.totalOutput)} tok\n`;
+
+      if (Object.keys(stats.byModel).length > 0) {
+        reply += `\nモデル別:\n`;
+        for (const [model, m] of Object.entries(stats.byModel)) {
+          reply += `• ${model}: ${m.calls}回 (入力 ${fmt(m.input)} / 出力 ${fmt(m.output)} tok)\n`;
+        }
+      }
+
+      if (stats.byDay.length > 0) {
+        reply += `\n日別 (直近):\n`;
+        for (const d of stats.byDay.slice(0, 7)) {
+          reply += `• ${d.date}: ${d.calls}回 | 入力 ${fmt(d.input)} / 出力 ${fmt(d.output)} tok\n`;
+        }
+      }
+
+      return reply.trim();
+    } catch (err) {
+      logger.error({ err }, 'Failed to get usage stats');
+      return 'Error retrieving usage stats.';
+    }
+  }
+
+  // /new — start a fresh Claude session (clears session_id)
+  if (/^\/new$/i.test(text)) {
+    sessions[groupFolder] = '';
+    setSession(groupFolder, '');
+    return '🆕 新しいセッションを開始しました。\n次のメッセージからコンテキストがリセットされます。';
+  }
+
+  // /help — list available commands
+  if (/^\/help$/i.test(text)) {
+    return [
+      '📖 使用可能なコマンド:',
+      '/new — セッションをリセット（コンテキスト消去）',
+      '/usage [日数] — APIトークン使用量を表示（デフォルト7日）',
+      '/useclaude — Claude に切り替え',
+      '/useollama [model] — Ollama に切り替え',
+    ].join('\n');
+  }
+
   return null;
 }
 
@@ -264,9 +321,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     idleTimer = setTimeout(() => {
       logger.debug(
         { group: group.name },
-        'Idle timeout, closing container stdin',
+        'Idle timeout, compacting and closing container',
       );
-      queue.closeStdin(chatJid);
+      queue.compactAndClose(chatJid);
     }, IDLE_TIMEOUT);
   };
 
@@ -619,6 +676,20 @@ async function main(): Promise<void> {
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
     PROXY_BIND_HOST,
+    (entry) => {
+      try {
+        logUsage({
+          timestamp: new Date().toISOString(),
+          model: entry.model,
+          inputTokens: entry.inputTokens,
+          outputTokens: entry.outputTokens,
+          requestPath: entry.requestPath,
+        });
+        logger.debug({ entry }, 'API usage logged');
+      } catch (err) {
+        logger.debug({ err }, 'Failed to log API usage');
+      }
+    },
   );
 
   // Graceful shutdown handlers

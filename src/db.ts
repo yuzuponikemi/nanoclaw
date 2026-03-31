@@ -82,6 +82,15 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      request_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_log_ts ON usage_log(timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -694,4 +703,69 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Usage tracking ---
+
+export interface UsageEntry {
+  timestamp: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  requestPath?: string;
+}
+
+export function logUsage(entry: UsageEntry): void {
+  db.prepare(`
+    INSERT INTO usage_log (timestamp, model, input_tokens, output_tokens, request_path)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    entry.timestamp,
+    entry.model,
+    entry.inputTokens,
+    entry.outputTokens,
+    entry.requestPath ?? null,
+  );
+}
+
+export function getUsageStats(days = 7): {
+  totalInput: number;
+  totalOutput: number;
+  totalCalls: number;
+  byModel: Record<string, { input: number; output: number; calls: number }>;
+  byDay: Array<{ date: string; input: number; output: number; calls: number }>;
+} {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const totals = db.prepare(`
+    SELECT COALESCE(SUM(input_tokens),0) as ti, COALESCE(SUM(output_tokens),0) as to2, COUNT(*) as calls
+    FROM usage_log WHERE timestamp >= ?
+  `).get(since) as { ti: number; to2: number; calls: number };
+
+  const byModelRows = db.prepare(`
+    SELECT model, SUM(input_tokens) as inp, SUM(output_tokens) as out, COUNT(*) as calls
+    FROM usage_log WHERE timestamp >= ?
+    GROUP BY model
+  `).all(since) as Array<{ model: string; inp: number; out: number; calls: number }>;
+
+  const byDayRows = db.prepare(`
+    SELECT substr(timestamp, 1, 10) as date,
+           SUM(input_tokens) as inp, SUM(output_tokens) as out, COUNT(*) as calls
+    FROM usage_log WHERE timestamp >= ?
+    GROUP BY substr(timestamp, 1, 10)
+    ORDER BY date DESC
+  `).all(since) as Array<{ date: string; inp: number; out: number; calls: number }>;
+
+  const byModel: Record<string, { input: number; output: number; calls: number }> = {};
+  for (const row of byModelRows) {
+    byModel[row.model || 'unknown'] = { input: row.inp, output: row.out, calls: row.calls };
+  }
+
+  return {
+    totalInput: totals.ti,
+    totalOutput: totals.to2,
+    totalCalls: totals.calls,
+    byModel,
+    byDay: byDayRows.map(r => ({ date: r.date, input: r.inp, output: r.out, calls: r.calls })),
+  };
 }

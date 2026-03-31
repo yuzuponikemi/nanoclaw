@@ -70,17 +70,50 @@ echo '{"mode":"claude"}' > /workspace/group/llm-mode.json
 
 When the user asks to switch backends, write the file and confirm that the switch will take effect from the next message.
 
-## Development Projects
+## Current Projects
 
-The following projects are mounted and available for development work:
+The following projects live in `/workspace/group/` and are available for development.
+Always read the project's `CLAUDE.md` and `PROJECT_STATUS.md` before starting work.
 
-### nanoikm-pg — `/workspace/extra/nanoikm-pg`
-The agent's development workspace. New projects and repositories live here.
+### nanoikm-pg — `/workspace/group/nanoikm-pg`
+nanoclaw の仕組みを学ぶための教材リポジトリ。アーキテクチャ・IPC・コンテナの仕組みをドキュメント化している。
+詳細: `/workspace/group/nanoikm-pg/CLAUDE.md`
 
-When working on projects here:
+### book-research (Project Cogito) — `/workspace/group/book-research`
+書籍・Webリサーチ → ポッドキャスト台本 → 音声合成の LangGraph パイプライン。ローカルの Ollama モデルを使用。
+詳細: `/workspace/group/book-research/CLAUDE.md`
+
+When working on GitHub operations:
 - GitHub authentication is available via `GITHUB_TOKEN` env var (already configured)
 - Git identity is set via `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` env vars (already set)
 - Use `gh issue list`, `gh pr create`, etc. for GitHub operations
+
+## Project Work Rules
+
+**Before discussing or working on any project that has a git remote:**
+1. Run `git pull` (or `git fetch && git status`) first
+2. Never assume the local state reflects the latest — always check remote
+
+**Branch workflow (mandatory):**
+- NEVER commit or push directly to `main`
+- Always create a feature branch before making changes:
+  ```bash
+  git checkout -b feature/your-description
+  ```
+- After changes are tested, open a PR with `gh pr create`
+
+**Before creating a new branch, check for open PRs:**
+```bash
+gh pr list
+```
+- If open PRs exist, check whether the files you plan to change overlap with those PRs
+- If there is likely a conflict, tell the user: which PRs conflict, what the overlap is, and suggest merging/closing those PRs first before proceeding
+- Only create the new branch once conflicts are resolved or confirmed non-overlapping
+
+After doing any work on a project:
+1. Update the project's `PROJECT_STATUS.md` with what you did
+2. Keep 「次のステップ」 current
+3. Log significant changes in 「直近の作業」 with a date
 
 ## Message Formatting
 
