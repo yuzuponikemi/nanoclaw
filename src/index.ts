@@ -169,7 +169,7 @@ function handleHostCommand(
   const ollamaMatch = text.match(/^\/useollama(?:\s+(.+))?$/i);
   if (ollamaMatch) {
     const requested = ollamaMatch[1]?.trim().toLowerCase();
-    let model = 'qwen3.5:latest';
+    let model = 'glm-4.7-flash:latest';
     if (requested) {
       model = OLLAMA_MODELS[requested] ?? requested;
     }

@@ -288,6 +288,7 @@ function buildContainerArgs(
     'GIT_AUTHOR_EMAIL',
     'GIT_COMMITTER_NAME',
     'GIT_COMMITTER_EMAIL',
+    'CLAUDE_MODEL',
   ]);
   if (devEnv.GITHUB_TOKEN) {
     args.push('-e', `GITHUB_TOKEN=${devEnv.GITHUB_TOKEN}`);
@@ -301,6 +302,8 @@ function buildContainerArgs(
     args.push('-e', `GIT_COMMITTER_NAME=${devEnv.GIT_COMMITTER_NAME}`);
   if (devEnv.GIT_COMMITTER_EMAIL)
     args.push('-e', `GIT_COMMITTER_EMAIL=${devEnv.GIT_COMMITTER_EMAIL}`);
+  if (devEnv.CLAUDE_MODEL)
+    args.push('-e', `NANOCLAW_CLAUDE_MODEL=${devEnv.CLAUDE_MODEL}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

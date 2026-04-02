@@ -419,6 +419,8 @@ async function runQuery(
   }
 
   const ollamaModel = process.env.NANOCLAW_OLLAMA_MODEL;
+  const claudeModel = process.env.NANOCLAW_CLAUDE_MODEL;
+  const effectiveModel = ollamaModel ?? claudeModel ?? undefined;
 
   // Ollama doesn't support session replay — always start fresh to avoid infinite loops
   const effectiveSessionId = ollamaModel ? undefined : sessionId;
@@ -431,7 +433,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: effectiveSessionId,
       resumeSessionAt: effectiveResumeAt,
-      model: ollamaModel ?? undefined,
+      model: effectiveModel,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,

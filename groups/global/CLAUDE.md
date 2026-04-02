@@ -53,11 +53,12 @@ You can switch between Claude and Ollama backends. The switch takes effect on th
 
 To switch to Ollama:
 ```bash
-echo '{"mode":"ollama","model":"qwen3-coder-next:latest"}' > /workspace/group/llm-mode.json
+echo '{"mode":"ollama","model":"glm-4.7-flash:latest"}' > /workspace/group/llm-mode.json
 ```
 
 Available Ollama models (installed on host):
-- `qwen3.5:latest` — default, balanced (6.6GB)
+- `glm-4.7-flash:latest` — default (19GB)
+- `qwen3.5:latest` — balanced (6.6GB)
 - `qwen3-coder-next:latest` — best for coding (51GB)
 - `nemotron-3-nano:30b` — general purpose (24GB)
 - `lfm2:latest` — general purpose (14GB)

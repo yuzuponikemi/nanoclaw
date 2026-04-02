@@ -1,8 +1,9 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -216,6 +217,28 @@ async function runTask(
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
+  }
+
+  // Save full result to file (best-effort; failures don't affect Telegram delivery)
+  if (result) {
+    try {
+      const now = new Date();
+      // e.g. "2026-04-01T11-25-43"
+      const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const outDir = path.join(DATA_DIR, 'task-results', task.group_folder, task.id);
+      fs.mkdirSync(outDir, { recursive: true });
+      const filePath = path.join(outDir, `${ts}.md`);
+      const header =
+        `# Task Result\n\n` +
+        `- task_id: ${task.id}\n` +
+        `- group: ${task.group_folder}\n` +
+        `- run_at: ${now.toISOString()}\n\n` +
+        `---\n\n`;
+      fs.writeFileSync(filePath, header + result, 'utf-8');
+      logger.info({ taskId: task.id, filePath }, 'Task result saved to file');
+    } catch (saveErr) {
+      logger.warn({ taskId: task.id, err: saveErr }, 'Failed to save task result to file');
+    }
   }
 
   const durationMs = Date.now() - startTime;

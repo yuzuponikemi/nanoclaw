@@ -23,7 +23,9 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
-function extractUsage(body: string): { model: string; inputTokens: number; outputTokens: number } | null {
+function extractUsage(
+  body: string,
+): { model: string; inputTokens: number; outputTokens: number } | null {
   let inputTokens = 0;
   let outputTokens = 0;
   let model = '';
@@ -41,7 +43,9 @@ function extractUsage(body: string): { model: string; inputTokens: number; outpu
         if (data.type === 'message_delta' && data.usage) {
           outputTokens = data.usage.output_tokens ?? 0;
         }
-      } catch { /* skip non-JSON lines */ }
+      } catch {
+        /* skip non-JSON lines */
+      }
     }
   }
 
@@ -54,7 +58,9 @@ function extractUsage(body: string): { model: string; inputTokens: number; outpu
         outputTokens = json.usage.output_tokens ?? 0;
         model = json.model ?? '';
       }
-    } catch { /* not JSON */ }
+    } catch {
+      /* not JSON */
+    }
   }
 
   return inputTokens > 0 ? { model, inputTokens, outputTokens } : null;
@@ -63,7 +69,12 @@ function extractUsage(body: string): { model: string; inputTokens: number; outpu
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
-  onUsage?: (entry: { model: string; inputTokens: number; outputTokens: number; requestPath: string }) => void,
+  onUsage?: (entry: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    requestPath: string;
+  }) => void,
 ): Promise<Server> {
   const secrets = readEnvFile([
     'ANTHROPIC_API_KEY',
@@ -145,11 +156,15 @@ export function startCredentialProxy(
               res.end();
               // Parse usage from response (SSE or JSON)
               try {
-                const responseBody = Buffer.concat(responseChunks).toString('utf8');
+                const responseBody =
+                  Buffer.concat(responseChunks).toString('utf8');
                 const usage = extractUsage(responseBody);
                 if (usage && onUsage) {
                   try {
-                    onUsage({ ...usage, requestPath: req.url ?? '/v1/messages' });
+                    onUsage({
+                      ...usage,
+                      requestPath: req.url ?? '/v1/messages',
+                    });
                   } catch (err) {
                     logger.debug({ err }, 'onUsage callback threw');
                   }

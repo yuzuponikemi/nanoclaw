@@ -716,10 +716,12 @@ export interface UsageEntry {
 }
 
 export function logUsage(entry: UsageEntry): void {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO usage_log (timestamp, model, input_tokens, output_tokens, request_path)
     VALUES (?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     entry.timestamp,
     entry.model,
     entry.inputTokens,
@@ -737,28 +739,57 @@ export function getUsageStats(days = 7): {
 } {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-  const totals = db.prepare(`
+  const totals = db
+    .prepare(
+      `
     SELECT COALESCE(SUM(input_tokens),0) as ti, COALESCE(SUM(output_tokens),0) as to2, COUNT(*) as calls
     FROM usage_log WHERE timestamp >= ?
-  `).get(since) as { ti: number; to2: number; calls: number };
+  `,
+    )
+    .get(since) as { ti: number; to2: number; calls: number };
 
-  const byModelRows = db.prepare(`
+  const byModelRows = db
+    .prepare(
+      `
     SELECT model, SUM(input_tokens) as inp, SUM(output_tokens) as out, COUNT(*) as calls
     FROM usage_log WHERE timestamp >= ?
     GROUP BY model
-  `).all(since) as Array<{ model: string; inp: number; out: number; calls: number }>;
+  `,
+    )
+    .all(since) as Array<{
+    model: string;
+    inp: number;
+    out: number;
+    calls: number;
+  }>;
 
-  const byDayRows = db.prepare(`
+  const byDayRows = db
+    .prepare(
+      `
     SELECT substr(timestamp, 1, 10) as date,
            SUM(input_tokens) as inp, SUM(output_tokens) as out, COUNT(*) as calls
     FROM usage_log WHERE timestamp >= ?
     GROUP BY substr(timestamp, 1, 10)
     ORDER BY date DESC
-  `).all(since) as Array<{ date: string; inp: number; out: number; calls: number }>;
+  `,
+    )
+    .all(since) as Array<{
+    date: string;
+    inp: number;
+    out: number;
+    calls: number;
+  }>;
 
-  const byModel: Record<string, { input: number; output: number; calls: number }> = {};
+  const byModel: Record<
+    string,
+    { input: number; output: number; calls: number }
+  > = {};
   for (const row of byModelRows) {
-    byModel[row.model || 'unknown'] = { input: row.inp, output: row.out, calls: row.calls };
+    byModel[row.model || 'unknown'] = {
+      input: row.inp,
+      output: row.out,
+      calls: row.calls,
+    };
   }
 
   return {
@@ -766,6 +797,11 @@ export function getUsageStats(days = 7): {
     totalOutput: totals.to2,
     totalCalls: totals.calls,
     byModel,
-    byDay: byDayRows.map(r => ({ date: r.date, input: r.inp, output: r.out, calls: r.calls })),
+    byDay: byDayRows.map((r) => ({
+      date: r.date,
+      input: r.inp,
+      output: r.out,
+      calls: r.calls,
+    })),
   };
 }
