@@ -61,6 +61,9 @@ const IPC_POLL_MS = 500;
 // Sentinel value returned by waitForIpcMessage() to request a compact-then-close
 const COMPACT_REQUEST = '__compact__';
 
+// Accumulate messages for archiving on session exit
+let sessionMessages: ParsedMessage[] = [];
+
 /**
  * Push-based async iterable for streaming user messages to the SDK.
  * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
@@ -145,44 +148,48 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
+function archiveFromTranscript(
+  transcriptPath: string,
+  sessionId: string,
+  assistantName?: string
+): void {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+    log('No transcript found for archiving');
+    return;
+  }
+
+  try {
+    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    const messages = parseTranscript(content);
+
+    if (messages.length === 0) {
+      log('No messages to archive');
+      return;
+    }
+
+    const summary = getSessionSummary(sessionId, transcriptPath);
+    const name = summary ? sanitizeFilename(summary) : generateFallbackName();
+
+    const conversationsDir = '/workspace/group/conversations';
+    fs.mkdirSync(conversationsDir, { recursive: true });
+
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `${date}-${name}.md`;
+    const filePath = path.join(conversationsDir, filename);
+
+    const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+    fs.writeFileSync(filePath, markdown);
+
+    log(`Archived conversation to ${filePath}`);
+  } catch (err) {
+    log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 function createPreCompactHook(assistantName?: string): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: unknown, _toolUseId: string, _context: unknown) => {
     const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
-    try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
-    } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
+    archiveFromTranscript(preCompact.transcript_path, preCompact.session_id, assistantName);
     return {};
   };
 }
@@ -361,6 +368,7 @@ async function runQuery(
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; compactRequestedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
+  sessionMessages.push({ role: 'user', content: prompt });
 
   // Poll IPC for follow-up messages and _close/_compact sentinels during the query
   let ipcPolling = true;
@@ -385,6 +393,7 @@ async function runQuery(
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
+      sessionMessages.push({ role: 'user', content: text });
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -501,6 +510,9 @@ async function runQuery(
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      if (textResult) {
+        sessionMessages.push({ role: 'assistant', content: textResult });
+      }
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -635,7 +647,28 @@ async function main(): Promise<void> {
       newSessionId: sessionId,
       error: errorMessage
     });
-    process.exit(1);
+  } finally {
+    // Final archival on exit.
+    // Use sessionMessages for the current session data, since we don't have
+    // easy access to the SDK's internal transcript path outside of the hooks.
+    if (sessionMessages.length > 0) {
+      log(`Session ending, archiving ${sessionMessages.length} messages manually`);
+      const conversationsDir = '/workspace/group/conversations';
+      try {
+        fs.mkdirSync(conversationsDir, { recursive: true });
+        const date = new Date().toISOString().split('T')[0];
+        const name = generateFallbackName(); // Manual archival doesn't have easy access to summary
+        const filename = `${date}-${name}.md`;
+        const filePath = path.join(conversationsDir, filename);
+
+        const markdown = formatTranscriptMarkdown(sessionMessages, 'Conversation', containerInput.assistantName);
+        fs.writeFileSync(filePath, markdown);
+        log(`Manual archive saved to ${filePath}`);
+      } catch (err) {
+        log(`Failed manual archival: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    process.exit(0);
   }
 }
 

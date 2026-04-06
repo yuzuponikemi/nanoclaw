@@ -160,8 +160,12 @@ describe('task scheduler - result file saving', () => {
     });
 
     // Spy on fs so we can capture writes without touching the real filesystem
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
-    const writeFileSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
+    const writeFileSpy = vi
+      .spyOn(fs, 'writeFileSync')
+      .mockImplementation(() => undefined);
 
     const THE_RESULT = 'This is the full research report.';
 
@@ -218,6 +222,8 @@ describe('task scheduler - result file saving', () => {
     const groupFolder = 'test-group';
     const dataDir = path.resolve(process.cwd(), 'data');
     const expectedDir = path.join(dataDir, 'task-results', groupFolder, taskId);
-    expect(expectedDir).toContain(path.join('task-results', groupFolder, taskId));
+    expect(expectedDir).toContain(
+      path.join('task-results', groupFolder, taskId),
+    );
   });
 });
