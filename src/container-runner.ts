@@ -246,10 +246,10 @@ function buildContainerArgs(
   const llmMode = readLlmMode(groupFolder);
 
   if (llmMode.mode === 'ollama') {
-    // Ollama mode: bypass credential proxy, point directly to local Ollama
+    // Ollama mode: bypass credential proxy, point directly to local OllamaProx
     args.push(
       '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:11434`,
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:11435`,
     );
     args.push('-e', 'ANTHROPIC_API_KEY=ollama');
     if (llmMode.model) {
